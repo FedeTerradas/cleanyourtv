@@ -508,6 +508,15 @@
          press, which a slow GPU such as the Mali-G52 cannot keep up with. Can also be set with "glow_snap" in a
          theme's config.json. -->
     <bool name="glow_snap">false</bool>
+
+    <!-- Continue watching shelf above the dock: the apps' own "continue watching" cards (title, poster, progress)
+         from the TV's Watch Next table, opened with the app's own link. Needs READ_TV_LISTINGS (granted with
+         `pm grant`, see the build script) and INTERNET for the posters. Can also be set with "continue_watching"
+         in a theme's config.json. -->
+    <bool name="continue_watching">false</bool>
+    <!-- Only programs from packages containing this text show (case-insensitive); empty shows every app's.
+         Theme key "continue_watching_package". -->
+    <string name="continue_watching_package" translatable="false"></string>
     <!-- The focus highlight glows in the focused app's colour on every tile, as the cinematic shelf does for the
          dock, without cinematic_home. Can also be set with "app_glow": true in a theme's config.json. -->
     <bool name="app_glow">false</bool>

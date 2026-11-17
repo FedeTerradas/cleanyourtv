@@ -150,6 +150,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView heroName;
     /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
     private View hero;
+    /** Continue watching shelf (config.xml continue_watching), null when off. */
+    private ContinueWatching continueShelf;
+    /** Where the shelf rests (its Y with the grid not scrolled); the grid's scroll lifts it from here. */
+    private float continueShelfBaseY;
     private TextView heroMeta;
     private LinearLayout heroDots;
     /** Cinematic top shelf (config.xml, cinematic_home): the focused dock app's artwork behind a larger shelf. */
@@ -538,6 +542,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // dock_title false: the name above the dock (and the cinematic lines under it) never shows; the glow
         // still follows the dock.
         if (!cfg.dockTitle) hero.setVisibility(View.GONE);
+        if (cfg.continueWatching) {
+            continueShelf = new ContinueWatching(this, cfg.continueWatchingPackage, density);
+            continueShelf.onDown = () -> focusTile(Math.max(0, Math.min(lastFocused, Math.min(COLUMNS, adapter.appCount()) - 1)));
+            FrameLayout.LayoutParams shelfLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, continueShelf.heightPx());
+            shelfLp.leftMargin = (int) (56 * density);
+            shelfLp.rightMargin = (int) (56 * density);
+            root.addView(continueShelf.view(), root.indexOfChild(findViewById(R.id.glass)), shelfLp);
+        }
         greeting = findViewById(R.id.greeting);
         clockBlock = findViewById(R.id.leftBlock);
         clockRefresh = new ClockRefresh(clockBlock);
@@ -741,6 +753,26 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     grid.requestLayout();
                 });
             }
+            if (continueShelf != null) {
+                int[] g = new int[2], rt = new int[2];
+                grid.getLocationOnScreen(g);
+                root.getLocationOnScreen(rt);
+                float dockTop = g[1] - rt[1] + want;
+                float bottom = cfg.dockTitle ? dockTop - 14 * density - 26 * density - hero.getHeight() - 6 * density : dockTop - 18 * density;
+                // The cards grow to fill what is left between the clock and the dock.
+                View clock = findViewById(R.id.leftBlock);
+                int[] ck = new int[2];
+                clock.getLocationOnScreen(ck);
+                float top = ck[1] - rt[1] + clock.getHeight() + 26 * density;
+                int shelfH = continueShelf.fit((int) (bottom - top));
+                View shelfView = continueShelf.view();
+                if (shelfView.getLayoutParams().height != shelfH) {
+                    shelfView.getLayoutParams().height = shelfH;
+                    shelfView.post(shelfView::requestLayout);
+                }
+                continueShelfBaseY = bottom - shelfH;
+                continueShelf.view().setY(continueShelfBaseY - (grid.canScrollVertically(-1) ? grid.computeVerticalScrollOffset() : 0));
+            }
             // Cold start or column count > 4: the first focus can run before the grid has its final width or
             // padding, leaving the glass at the XML design size until a key is pressed.
             grid.post(this::refitGlass);
@@ -762,6 +794,22 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 }
             }
         });
+
+        // Continue watching: the shelf rides up with the dock when the grid scrolls, and fades out before the clock.
+        if (continueShelf != null) {
+            View clockBlock = findViewById(R.id.leftBlock);
+            grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
+                @Override
+                public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                    int shift = rv.canScrollVertically(-1) ? rv.computeVerticalScrollOffset() : 0;
+                    View shelf = continueShelf.view();
+                    shelf.setY(continueShelfBaseY - shift);
+                    float room = Math.max(1f, continueShelfBaseY - clockBlock.getBottom());
+                    shelf.setAlpha(Math.max(0f, 1f - shift / room));
+                    shelf.setVisibility(shift >= room || !continueShelf.hasCards() ? View.GONE : View.VISIBLE);
+                }
+            });
+        }
 
         // game_day: the panel above the dock rides up with the cards instead of being covered by them, and fades
         // out by the time it reaches the clock. The grid's own offset is read, so a jump (Home, a restored focus)
@@ -1116,6 +1164,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (openLiveTvAfterBoot()) return;
         updateGreeting();
         updatePanel();
+        if (continueShelf != null) continueShelf.refresh();
         // Back from an app opened from its tile, focus is still on that tile, so the cinematic "Last opened" line kept
         // the time from before this launch ("2 days ago" right after opening it). Refresh it.
         if (cinematic && heroMeta != null && lastFocused >= 0 && lastFocused < adapter.appCount()) updateHeroMeta(lastFocused);
@@ -1374,6 +1423,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (continueShelf != null) continueShelf.destroy();
         RemoteKeys.release(this);
         cancelHoldOk();
         if (gameDay != null) gameDay.shutdown();
@@ -2452,7 +2502,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     rtlAppGrid, keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-            if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
+            // dock row: up into the Continue watching cards when they show, else on to the top bar
+            if (position < COLUMNS) return continueShelf != null && continueShelf.view().getAlpha() > 0.5f && continueShelf.takeFocus();
             target = position - COLUMNS;
         } else {
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
